@@ -2,7 +2,8 @@ import pickle
 from plyer import accelerometer, gyroscope
 import numpy as np
 from scipy.stats import skew, kurtosis, entropy
-from scipy.signal import butter, welch, filtfilt
+from scipy.signal import butter, welch, filtfilt, lfilter
+import math
 from scipy.fft import fft
 from kivy.app import App
 from kivy.uix.button import Button
@@ -10,6 +11,10 @@ from kivy.uix.label import Label
 from kivy.uix.boxlayout import BoxLayout
 from kivy.clock import Clock
 import time
+import warnings
+import json
+warnings.filterwarnings('ignore')
+
 
 # Load pre-trained models and scalers using pickle4
 with open("/storage/emulated/0/ml_project/scaler_pkl", "rb") as scaler_file:
@@ -86,16 +91,11 @@ with open("/storage/emulated/0/ml_project/svm_pkl", "rb") as model_file:
 #     return features
 
 # Function to apply a Butterworth filter
-def butter_lowpass_filter(data, cutoff, fs, order=4):
+def butter_lowpass_filter(data, cutoff, fs, order=0):
     nyquist = 0.5 * fs
     normal_cutoff = cutoff / nyquist
     b, a = butter(order, normal_cutoff, btype="low", analog=False)
-    
-    f = open("imp_check.txt", 'a')
-    f.write("\n" + str(b) + "  " + str(a))
-    f.close()
-    
-    y = filtfilt(b, a, data, padlen=15)
+    y = lfilter(b, a, data)
     return y
 
 
@@ -137,7 +137,7 @@ def calculate_frequency_features(signal, fs):
     features['maxInds'] = np.argmax(Pxx)
     return features
 
-def extract_features_from_window(window_data, ob):
+def extract_features_from_window(window_data, ob=None):
     # self.window_data["accel_x"].append(accel_x)
     # self.window_data["accel_y"].append(accel_y)
     # self.window_data["accel_z"].append(accel_z)
@@ -147,6 +147,22 @@ def extract_features_from_window(window_data, ob):
 
     tAcc_XYZ, tGyro_XYZ = [], []
 
+    for key in window_data:
+        sum = 0
+        n = 0
+        mean = 0
+        for i in window_data[key]:
+            if not(i is None or math.isnan(i) or np.isneginf(i) or np.isposinf(i)):
+                sum += i
+                n += 1
+        
+        if n > 0:
+            mean = sum / n
+
+        for i in range(len(window_data[key])):
+            if window_data[key][i] is None or math.isnan(window_data[key][i]) or np.isneginf(window_data[key][i]) or np.isposinf(window_data[key][i]):
+                window_data[key][i] = mean
+
     tAcc_XYZ.append(window_data["accel_x"])
     tAcc_XYZ.append(window_data["accel_y"])
     tAcc_XYZ.append(window_data["accel_z"])
@@ -154,9 +170,9 @@ def extract_features_from_window(window_data, ob):
     tGyro_XYZ.append(window_data["gyro_y"])
     tGyro_XYZ.append(window_data["gyro_z"])
 
-    f = open("imp_check.txt", 'a')
-    f.write("\nbefore error")
-    f.close()
+    # ob.setLabel(str(len(tAcc_XYZ[0])) + " " + str(len(tGyro_XYZ[0])))
+    # time.sleep(2)
+    print(str(len(tAcc_XYZ[0])) + " " + str(len(tGyro_XYZ[0])))
 
     # Preprocess the signals
     fs = 50  # Sampling frequency
@@ -166,10 +182,7 @@ def extract_features_from_window(window_data, ob):
     tGyro_XYZ_filtered = np.apply_along_axis(
         butter_lowpass_filter, 0, tGyro_XYZ, cutoff=20, fs=fs
     )
-    
-    f = open("imp_check.txt", 'w')
-    f.write("\n2 times")
-    f.close()
+
     # Separate body and gravity acceleration signals
     tBodyAcc_XYZ = np.apply_along_axis(
         butter_lowpass_filter, 0, tAcc_XYZ_filtered, cutoff=0.3, fs=fs
@@ -187,7 +200,8 @@ def extract_features_from_window(window_data, ob):
     tBodyGyroMag = np.linalg.norm(tGyro_XYZ_filtered, axis=1)
     tBodyGyroJerkMag = np.linalg.norm(tBodyGyroJerk_XYZ, axis=1)
 
-    ob.setLabel("Before FFT")
+    # ob.setLabel("Before FFT")
+    print("Before FFT")
 
     # Apply FFT
     fBodyAcc_XYZ = np.apply_along_axis(fft, 0, tBodyAcc_XYZ, n=128)
@@ -198,7 +212,8 @@ def extract_features_from_window(window_data, ob):
     fBodyGyroMag = fft(tBodyGyroMag, n=128)
     fBodyGyroJerkMag = fft(tBodyGyroJerkMag, n=128)
 
-    ob.setLabel("After FFT")
+    # ob.setLabel("After FFT")
+    print("After FFT")
 
     # Extract features
     features = {}
@@ -245,7 +260,8 @@ def extract_features_from_window(window_data, ob):
     tBodyGyroMean = np.mean(tGyro_XYZ_filtered, axis=0)
     tBodyGyroJerkMean = np.mean(tBodyGyroJerk_XYZ, axis=0)
 
-    ob.setLabel("Before Angle calc")
+    # ob.setLabel("Before Angle calc")
+    print("Before Angle calc")
 
     # Calculate angles
     features["angle(tBodyAccMean,gravity)"] = np.arccos(
@@ -274,7 +290,8 @@ def extract_features_from_window(window_data, ob):
         gravityMean[2] / np.linalg.norm(gravityMean)
     )
 
-    ob.setLabel("After Angle calc")
+    # ob.setLabel("After Angle calc")
+    print("After Angle Calc")
 
     # Organize features into a NumPy array in the order specified by features.txt
     from final_features import feature_list
@@ -349,9 +366,19 @@ def extract_features_from_window(window_data, ob):
 
 
     # # Print the feature array
-    # print(len(feature_list))
-    # print(len(feature_array))
+    print(len(feature_list))
+    print(len(feature_array))
 
+    valid_values = feature_array[~np.isnan(feature_array) & ~np.isinf(feature_array)]
+
+    mean = np.nanmean(valid_values)
+    print(mean)
+    for i in range(len(feature_array)):
+        if feature_array[i] is None or math.isnan(feature_array[i]) or np.isneginf(feature_array[i]) or np.isposinf(feature_array[i]):
+            feature_array[i] = mean
+    
+    # feature_array = np.nan_to_num(feature_array, nan=mean)
+    # print(mean)
     return feature_array
 
 
@@ -380,31 +407,35 @@ class ActivityRecognitionApp(App):
         Clock.schedule_interval(self.collect_data, 0.05)  # 50 Hz
 
     def stop_recording(self, instance):
-        #f = open("imp_check.txt", 'w')
-        #f.write(str(len(self.window_data['accel_x'])))
-        #f.close()
-        
-        import json
-        f = open("sensor_data.txt", 'w')
+        f = open("sensor_data.txt", "w")
         json.dump(self.window_data, f)
         f.close()
-        
+
         self.is_collecting = False
-        self.label.text = "Stopped recording. Processing data of length" + str(len(self.window_data['accel_x']))
+        self.label.text = "Stopped recording. Processing data."
         Clock.unschedule(self.collect_data)
         accelerometer.disable()
         gyroscope.disable()  # Disable gyroscope
-        
+
         if len(self.window_data["accel_x"]) >= 128:
-                features = extract_features_from_window(self.window_data, self)
-                normalized_features = scaler.transform([features])  # Normalize
-                reduced_features = pca.transform(normalized_features)  # Dimensionality reduction
-                prediction = ml_model.predict(reduced_features)[0]  # Predict activity
-                self.label.text = f"Predicted Activity: {prediction}"
+            features = extract_features_from_window(self.window_data, self)
+            normalized_features = scaler.transform([features])  # Normalize
+            reduced_features = pca.transform(normalized_features)  # Dimensionality reduction
+            prediction = ml_model.predict(reduced_features)[0]  # Predict activity
+            self.label.text = f"Predicted Activity: {prediction}"
+            
+            targets = ["STANDING", "WALKING_UPSTAIRS", "WALKING", "WALKING_DOWNSTAIRS", "SITTING", "LAYING"]
+            predicted_activity = targets[prediction]
+            self.label.text = f"Predicted Activity: {predicted_activity}"
+
+            f = open("classification.txt", 'w')
+            f.write(f"Predicted Activity: {prediction}")
+            f.close()
 
     def collect_data(self, dt):
         if not self.is_collecting:
-        	return
+            return
+
         try:
             accel_data = accelerometer.acceleration
             gyro_data = gyroscope.rotation
@@ -424,21 +455,36 @@ class ActivityRecognitionApp(App):
             self.window_data["gyro_z"].append(gyro_z)
 
             # Maintain window size of 128 samples
-            #for key in self.window_data:
-               # if len(self.window_data[key]) > 128:
-                  #  self.window_data[key].pop(0)
+            # for key in self.window_data:
+            #     if len(self.window_data[key]) > 128:
+            #         self.window_data[key].pop(0)
 
-            # If enough data is collected, process it
-            # if len(self.window_data["accel_x"]) >= 128:
+            # # If enough data is collected, process it
+            #if len(self.window_data["accel_x"]) == 128:
                 #features = extract_features_from_window(self.window_data, self)
-                #normalized_features = scaler.transform([features])  # Normalize
-                #reduced_features = pca.transform(normalized_features)  # Dimensionality reduction
+               # features = features.reshape(1,-1)
+              #  normalized_features = scaler.transform([features])  # Normalize
+              #  reduced_features = pca.transform(normalized_features)  # Dimensionality reduction
                 #prediction = ml_model.predict(reduced_features)[0]  # Predict activity
-                #self.label.text = f"Predicted Activity: {prediction}"
+                
 
         except Exception as e:
             self.label.text = f"Error: {e}"
 
 # Run the app
 if __name__ == "__main__":
-    ActivityRecognitionApp().run() 
+    ActivityRecognitionApp().run()
+
+    # import json
+
+    # f = open("sensor_data.txt")
+    # data = json.load(f)
+    # f.close()
+
+    # feature_vector = (extract_features_from_window(data))
+    # feature_vector = feature_vector.reshape(1,-1)
+    # normalized_features = scaler.transform(feature_vector)  # Normalize
+    # reduced_features = pca.transform(normalized_features)  # Dimensionality reduction
+    # prediction = ml_model.predict(reduced_features)[0]  # Predict activity
+    # label = f"Predicted Activity: {prediction}"
+    # print(label)
